@@ -1,0 +1,245 @@
+---
+title: "Assignment1_template_v2"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+## Preamble: Data
+```{r }
+CAhousing <- read.csv("Calhousing.csv")
+```
+Here we will try to predict the median home values (`logMedVal') `for areas in California where we have the following covariates for the houses:
+* longitude  
+* latitude  
+* housingMedianAge 
+* population  
+* households 
+* medianIncome 
+* AveBedrms 
+* AveRooms  
+* AveOccupancy  - people per house hold
+
+You can get feel for the spatial structure of the data by looking at:
+```{r}
+library(maps)
+## preds
+map('state', 'california') 
+points(CAhousing[,1:2], col=CAhousing$logMedVal, pch=20, cex=.5)
+```
+
+
+For prediction we will use regression trees, random forest and bagging.
+Since we will compare different models we split the data into traning and testing set:
+```{r}
+set.seed(1)
+n <- dim(CAhousing)[1]
+index <- sample(n,n,replace=T)
+index.train <- index[1:ceiling(0.75*n)]
+intex.test  <- setdiff(1:n, index.train)
+CAhousing.train <- CAhousing[index.train,]
+CAhousing.test  <- CAhousing[intex.test,]
+```
+
+
+For prediction we will use regression trees, random forest and bagging.
+
+## Part 1: regression tree
+
+We start by building our tree model using the library `rpart` to estimate a regression tree.
+
+# task 1a)
+Start by fitting a regression tree using `rpart` where we want predict `logMedVal` using all the covariates. Don't forget to set the correct `method` option. 
+
+```{r }
+library(rpart)
+tree.0 <- rpart(logMedVal~. ,data =CAhousing.train, method="anova")
+```
+
+# task 1b)
+You can visualize your tree using the library `rpart.plot`. According to the tree model when does the location (longitude and latitude) become important?
+```{r }
+library(rpart.plot)
+rpart.plot(tree.0)
+task1b.location.important <- "In the tree model, the location does not become important, because it does not enter the model. It would have entered the model when the tree was run with CAhousing, instead of CAhousing.train. Then it would have become important with small values of median income (smaller than 2.5)"
+```
+
+
+# task 1c)
+`rparyt` is using the hyperparameter `cp` for regularization.  Where the regularization function is
+$$
+L(y,T(x;\theta)) + cp |T| L(y,T_1(x;\theta)) 
+$$
+where $T_1(x;\theta) = \bar{y}$. 
+One can plot the effect of `cp` on the relative error with `plotcp`. In the figure the dashed line represent what one standard deviation off the smallest relative error is. You should now select `cp` by the $1-$s.e rule.
+The default option for stopping calculating `cp`values in `rpart` is $0.001$, this can be seen in the help of `help(rpart.control)`. We need to lower it a bit (we use `control` to set it to $0.0005$. 
+Use the one $1-$s.e. rule to set `task1c.cp`.
+
+*  Explain how the $1-$s.e. rule work and then use it to calculate `task1c.cp.1se`. 
+*  `rpart` does not calculate the value (`task1c.cp.1se`) for you so you need to compute it yourself.  You can find the cross-validation error and standard deviation in `tree.1$cptable`. Here `xerror` is the cross-validation error and `xstd` is the corresponding standard deviation. 
+```{r}
+control=c(cp=0.0005)
+tree.1 <- rpart(logMedVal~. ,data =CAhousing.train, method="anova", control = control)
+plotcp(tree.1)
+
+
+a<- tree.1[["cptable"]][which.min(tree.1[["cptable"]][,4]),4]+tree.1[["cptable"]][which.min(tree.1[["cptable"]][,4]),5]
+
+task1c.cp.1se <- tree.1[["cptable"]][which.min(abs(tree.1[["cptable"]][,4]-a)),1]
+  
+  
+tree.2 <- prune(tree.1, cp= task1c.cp.1se )
+
+task1c.explain1se <- "The 1se rule finds a cp that is at a height of minimum cross-validated error rate + 1 standard error. In fact, it identifies a better-defined value of cp where the curve has a detectable negative slope"
+
+
+
+```
+
+# task 1d)
+Evaluate the average L2 test loss (that is the mse on the test data) using `predict` for the prunned tree.
+```{r}
+y.test.hat <- predict(tree.2,newdata = CAhousing.test)
+y.test     <- CAhousing.test$logMedVal
+task1d.L2.loss <- mean((y.test-y.test.hat)^2)
+```
+
+
+## Part 2 Bagging
+
+## Task 2 a)
+Now we are going to build a bagging model. To see if it outperforms the tree. Here you are supposed to:
+
+* Sample a bootstrap sample from the training data. 
+* train a tree on the bootstrap sample. You will want to the grow as deep as possible so set `cp=0` in `rpart`.
+* For each of the bootstrap trees you are supposed to generate a prediction on the test data.
+* Then use the average predictor (`y.test.boot.hat`) to compute the average l2 loss of the test data.
+
+Hint use the lecture slide on how to build the Bagging. Since the data is rather big it can be a good idea to first try your code on a smaller subset of data and use a smaller `n.boot` until it runs.
+
+```{r bagging, echo=FALSE}
+set.seed(1)
+n <- dim(CAhousing.train)[1]
+n.boot <- 200
+control.bagging =c(cp=0)
+y.test.boot.hat <- rep(0, length(y.test))
+
+
+
+for(i in 1:n.boot){
+  
+   index.boot<-sample(n,n,replace=T)
+            
+
+   data.boot<-CAhousing.train[index.boot,]
+
+   
+   tree.boot=rpart(logMedVal~.,data=data.boot,method="anova",control=control.bagging)
+   
+  
+   y.test.boot.hat<-y.test.boot.hat+predict(tree.boot,newdata = CAhousing.test) 
+  
+}
+
+y.test.boot.hat<-y.test.boot.hat/n.boot
+
+task2a.L2.loss <- mean((y.test-y.test.boot.hat)^2)
+
+```
+
+## Task 2 b) 
+Now will compare the OOB on the training data with error on the test data.
+
+* The fist two step in Task a).
+* Now compute the OOB predictor on the training data.
+* Compute the average L2 loss on the training data.
+ 
+
+```{r OOB, echo=FALSE}
+set.seed(1)
+y.train <- CAhousing.train$logMedVal
+n <- dim(CAhousing.train)[1]
+n.boot <- 200
+control.bagging =c(cp=0)
+
+B <- rep(0,length=length(y.train))
+f <- rep(0,length=length(y.train))
+
+
+for(i in 1:n.boot){
+  
+   index.boot<-sample(n,n,replace=T)
+
+   
+   not.selected <- setdiff(1:length(y.train),unique(index.boot))
+   B[not.selected] <- B[not.selected] + 1
+   
+
+   
+   x.boot <- CAhousing.train[index.boot,c(1:9)]
+   y.boot <- y.train[index.boot]
+
+
+   tree.boot=rpart(y~.,data=data.frame(x.boot,y=y.boot),method="anova",control=control.bagging)
+
+   f[not.selected] <- f[not.selected] +predict(tree.boot,newdata =CAhousing.train[not.selected,c(1:9)])
+
+}
+
+f<-f/B
+
+
+task2b.L2.loss.OOB <- mean((y.train-f)^2)
+```
+
+
+
+## Part 3 Forest
+
+Now will build a random forest using `randomForest` library.
+
+## Task 3 a)
+Fit forest with `mtry` option set to the number suggested by the book (see `help(randomForest)` for what the argument `mtry` means).
+Use the forest model to compute the average L2 test loss  (use `predict`).
+```{r , echo=FALSE}
+
+library(randomForest)
+m.book <- (dim(CAhousing.train)[2] - 1)/3
+forest.model <- randomForest(logMedVal ~ ., data = CAhousing.train,mtry = m.book ,ntree=200, importance=T)
+
+y.predicted <- predict(forest.model,newdata=CAhousing.test)
+
+
+task3a.L2loss <-mean((y.test-y.predicted)^2)
+```
+
+## Task 3 b)
+Now we are going see if we can improve prediction by using a different `mtry`. We tune the parameter using `tuneRF`. Use the `help(tuneRF)` to fill in the blanks. Set the new `mtry` value in `m.new` and see if the new models improves the average L2 loss on the test data.
+```{r , echo=FALSE}
+X <- subset(CAhousing.train, select = -logMedVal)
+hyperparameter <- tuneRF(X, CAhousing.train$logMedVal,ntreeTry =100,improve=0.01)
+
+m.new  = hyperparameter[which.min(hyperparameter[,"OOBError"]),"mtry"]
+
+forest.model2 <- randomForest(logMedVal ~ ., data = CAhousing.train,mtry = m.new ,ntree=200, importance=T)
+
+y.predicted2 <- predict(forest.model2,newdata=CAhousing.test)
+
+task3b.L2loss <-mean((y.test-y.predicted2)^2)
+task3b.improvment <- "there is an improvement on the average loss with the new mtry because we see that forest model 2 has lower loss compared to forest model 1. It means that using a different mtry acutally improves the model"
+```
+
+
+## Task 3 c)
+
+We can use the average increase in MSE by permuting a variable in a random forest as a measure of variable importance. That if how much would the OOB mse increase if we replaced the correct variable value with a random permutation from the data.
+This can be viewed for all covariates using the function `varImpPlot`. Which was the variable most important according to the permutation mse measure?
+```{r , echo=FALSE}
+varImpPlot( forest.model2)
+task3c.important <- "AveOccupancy is the most important variable with the highest average increase of MSE" 
+```
+
+
